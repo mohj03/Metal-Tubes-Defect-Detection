@@ -1,0 +1,347 @@
+[
+  {
+    "filename": "0001.png",
+    "n_tubes": 17,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        635,
+        359,
+        791,
+        501
+      ]
+    ]
+  },
+  {
+    "filename": "0002.png",
+    "n_tubes": 12,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        547,
+        514,
+        632,
+        593
+      ]
+    ]
+  },
+  {
+    "filename": "0003.png",
+    "n_tubes": 18,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        488,
+        330,
+        627,
+        482
+      ],
+      [
+        446,
+        528,
+        563,
+        682
+      ]
+    ]
+  },
+  {
+    "filename": "0004.png",
+    "n_tubes": 14,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0005.png",
+    "n_tubes": 18,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0006.png",
+    "n_tubes": 16,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        589,
+        256,
+        745,
+        383
+      ]
+    ]
+  },
+  {
+    "filename": "0007.png",
+    "n_tubes": 14,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        833,
+        389,
+        935,
+        536
+      ]
+    ]
+  },
+  {
+    "filename": "0008.png",
+    "n_tubes": 17,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        331,
+        384,
+        452,
+        548
+      ]
+    ]
+  },
+  {
+    "filename": "0009.png",
+    "n_tubes": 17,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        497,
+        332,
+        591,
+        426
+      ]
+    ]
+  },
+  {
+    "filename": "0010.png",
+    "n_tubes": 15,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0011.png",
+    "n_tubes": 11,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        223,
+        548,
+        312,
+        632
+      ]
+    ]
+  },
+  {
+    "filename": "0012.png",
+    "n_tubes": 14,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0013.png",
+    "n_tubes": 17,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0014.png",
+    "n_tubes": 18,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        455,
+        175,
+        548,
+        259
+      ]
+    ]
+  },
+  {
+    "filename": "0015.png",
+    "n_tubes": 15,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        604,
+        597,
+        700,
+        694
+      ]
+    ]
+  },
+  {
+    "filename": "0016.png",
+    "n_tubes": 12,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        505,
+        385,
+        663,
+        497
+      ]
+    ]
+  },
+  {
+    "filename": "0017.png",
+    "n_tubes": 14,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        400,
+        348,
+        539,
+        514
+      ]
+    ]
+  },
+  {
+    "filename": "0018.png",
+    "n_tubes": 18,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0019.png",
+    "n_tubes": 15,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        456,
+        177,
+        551,
+        259
+      ]
+    ]
+  },
+  {
+    "filename": "0020.png",
+    "n_tubes": 18,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        727,
+        261,
+        889,
+        397
+      ],
+      [
+        481,
+        369,
+        614,
+        533
+      ],
+      [
+        432,
+        631,
+        584,
+        714
+      ]
+    ]
+  },
+  {
+    "filename": "0021.png",
+    "n_tubes": 17,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        453,
+        174,
+        546,
+        259
+      ]
+    ]
+  },
+  {
+    "filename": "0022.png",
+    "n_tubes": 18,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0023.png",
+    "n_tubes": 13,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        502,
+        261,
+        651,
+        403
+      ]
+    ]
+  },
+  {
+    "filename": "0024.png",
+    "n_tubes": 12,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        375,
+        330,
+        538,
+        462
+      ]
+    ]
+  },
+  {
+    "filename": "0025.png",
+    "n_tubes": 14,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        489,
+        384,
+        656,
+        531
+      ]
+    ]
+  },
+  {
+    "filename": "0026.png",
+    "n_tubes": 14,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        501,
+        262,
+        650,
+        398
+      ]
+    ]
+  },
+  {
+    "filename": "0027.png",
+    "n_tubes": 12,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        654,
+        576,
+        817,
+        710
+      ]
+    ]
+  },
+  {
+    "filename": "0028.png",
+    "n_tubes": 16,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0029.png",
+    "n_tubes": 16,
+    "anomalous": 0,
+    "bboxes": []
+  },
+  {
+    "filename": "0030.png",
+    "n_tubes": 14,
+    "anomalous": 1,
+    "bboxes": [
+      [
+        432,
+        390,
+        523,
+        542
+      ]
+    ]
+  }
+]
