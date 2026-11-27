@@ -35,8 +35,7 @@ def measure_reflection(reflection):
     distances = -(points[:, 0] - x0) * vy + (points[:, 1] - y0) * vx
     return max(width, height), np.std(distances)
 
-
-def evaluate(processed_images, expected_counts, vis=False):
+def evaluate(processed_images, expected_counts, vis=False, *, reference_boxes=None):
     """Evaluate anomaly counts per image.
 
     1. Measure reflection length and spread inside each tube box.
@@ -44,6 +43,9 @@ def evaluate(processed_images, expected_counts, vis=False):
     3. Flag reflections at or below 70% of the longest unless the cluster box is long and narrow.
 
     """
+    if reference_boxes is None:
+        reference_boxes = {}
+
     correct = 0
     errors = []
     header = f"{'Image':<12} {'Found':>7} {'Expected':>8} {'Error':>7}"
@@ -93,6 +95,11 @@ def evaluate(processed_images, expected_counts, vis=False):
             reflections = reflection_mask > 0
             reflection_color = np.array([0, 220, 255])
             overlay[reflections] = 0.45 * overlay[reflections] + 0.55 * reflection_color
+            for x_min, y_min, x_max, y_max in reference_boxes.get(filename, ()):
+                cv.rectangle(
+                    overlay, (x_min, y_min), (x_max, y_max),
+                    (50, 220, 70), 5, cv.LINE_AA,
+                )
             for detection in anomalies:
                 corners = np.rint(detection["box"]).astype(np.int32)
                 cv.polylines(overlay, [corners], True, (255, 50, 50), 3, cv.LINE_AA)
@@ -109,18 +116,20 @@ def evaluate(processed_images, expected_counts, vis=False):
 
 
 if __name__ == "__main__":
-    vis = False
-    #images = ["TubesDataset/0026.png"]  # Use a list of dataset image paths to select a subset.
-    images = None
+    vis = True
+    images = ["TubesDataset/0001.png"]  # Use a list of dataset image paths to select a subset.
+    #images = None
 
     with open("TubesDataset/annotations.json", encoding="utf-8") as file:
         annotations = json.load(file)
 
     expected_counts = {}
+    reference_boxes = {}
     all_images = []
     for entry in annotations:
         filename = entry["filename"]
-        expected_counts[filename] = len(entry["bboxes"])
+        reference_boxes[filename] = entry["bboxes"]
+        expected_counts[filename] = len(reference_boxes[filename])
         all_images.append(f"TubesDataset/{filename}")
 
     if images is None:
@@ -130,4 +139,4 @@ if __name__ == "__main__":
     for image in images:
         processed_images[image] = preprocess(image)
 
-    evaluate(processed_images, expected_counts, vis=vis)
+    evaluate(processed_images, expected_counts, vis=vis, reference_boxes=reference_boxes)

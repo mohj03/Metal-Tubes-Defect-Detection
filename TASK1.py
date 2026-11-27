@@ -19,24 +19,67 @@ min_cluster_support = 0.15
 fragment_gap = 16
 fragment_max_area = 2000
 
-def display_images(images, zoom=0):
-
+def display_images(images, zoom=0, heatmaps=None):
+    """Display titled images with optional heatmaps keyed by panel index."""
+    if heatmaps is None:
+        heatmaps = {}
     n_im = len(images)
-    fig, axes = plt.subplots(1, n_im, figsize=(16, 14), squeeze=False)
+    columns = min(n_im, 3)
+    rows = (n_im + columns - 1) // columns
+    fig, axes = plt.subplots(rows, columns, figsize=(16, 10), squeeze=False)
     axes = axes.flatten()
+
     for j, (description, image) in enumerate(images):
+        overlay = heatmaps.get(j)
         if zoom:
             h, w = image.shape[:2]
-            crop_h = int(h / zoom)                # find the middle
+            crop_h = int(h / zoom)
             crop_w = int(w / zoom)
-            y = (h - crop_h) // 2                 # coordiantes
+            y = (h - crop_h) // 2
             x = (w - crop_w) // 2
-            image = image[y:y+crop_h, x:x+crop_w] # zoom
-        axes[j].imshow(image, cmap="gray")
+            crop = np.s_[y:y + crop_h, x:x + crop_w]
+            image = image[crop]
+            if overlay is not None:
+                overlay = overlay[crop]
+
+        axes[j].imshow(image, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
+        if overlay is not None:
+            axes[j].imshow(
+                overlay, cmap="hot", vmin=0, vmax=1,
+                alpha=0.72 * overlay, interpolation="nearest",
+            )
         axes[j].set_title(description)
         axes[j].axis("off")
+
+    for ax in axes[n_im:]:
+        ax.set_visible(False)
+
     plt.tight_layout()
     plt.show()
+    plt.close(fig)
+
+
+def visualize_segmentation(images, detections, combined_heatmap):
+    """Show the original image, masks, final labels, and heatmap overlay."""
+    original, canny, foreground, reflections = images
+    segmentation = np.zeros_like(original)
+    for index, detection in enumerate(detections):
+        hue = (index * 137.508) % 360
+        hsv = np.array([[[hue, 0.78, 0.95]]], dtype=np.float32)
+        color = cv.cvtColor(hsv, cv.COLOR_HSV2RGB)[0, 0]
+        segmentation[detection["mask"]] = np.rint(255 * color).astype(np.uint8)
+
+    original_rgb = cv.cvtColor(original, cv.COLOR_BGR2RGB)
+    panels = [
+        ("Original image", original_rgb),
+        ("Otsu after opening", foreground),
+        ("Reflection mask", reflections),
+        ("Canny edges", canny),
+        ("Final tube labels", segmentation),
+        ("Heatmap on original image", original_rgb),
+    ]
+    display_images(panels, heatmaps={len(panels) - 1: combined_heatmap})
+
 
 def preprocess(image):
     img = cv.imread(str(image))  # load image
@@ -58,7 +101,7 @@ def preprocess(image):
     _, otsu_lab_a = cv.threshold(  # otsu on lab_a
         lab_a, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU
     )
-    combined_otsu = otsu_hsv_s & otsu_lab_a  # combining, corresponding white statys white, rest black
+    combined_otsu = otsu_hsv_s & otsu_lab_a  # combining, corresponding white stays white, rest black
     kernel = cv.getStructuringElement(cv.MORPH_RECT, (18, 18))  # morph with rectangle
     opened_cluster = cv.morphologyEx(  # remove background-noise
         combined_otsu,
@@ -88,8 +131,8 @@ def preprocess(image):
 def heatmap(evidence, vis=True):
     if np.any(evidence):
         # euclidean distance to the nearest evidence pixel
-        distance = euclidean_distance(evidence == 0)  # giving far distance-pixcels a high value
-        weights = np.exp(-distance**2 / (2 * heatmap_sigma**2))  # gaussian distance-based wheight-wave
+        distance = euclidean_distance(evidence == 0)  # giving far distance-pixels a high value
+        weights = np.exp(-distance**2 / (2 * heatmap_sigma**2))  # gaussian distance-based weight-wave
         weights[distance > heatmap_radius] = 0  # hard edge for heatmap contribution
     else:
         weights = np.zeros(evidence.shape, dtype=np.float32)
@@ -110,7 +153,6 @@ def color_clusters(label_image):
     colored[label_image == 0] = 0
     return cv.cvtColor(colored, cv.COLOR_BGR2RGB)
 
-
 def main(images, vis=True):
     """Return one detection per tube, with its label, position, mask and box."""
     org_im, hsv_canny, clusters, reflection_mask = images
@@ -123,9 +165,9 @@ def main(images, vis=True):
     line_masks = []
     for i in range(1, point_count):
         stroke_mask = (point_labels == i) # curr label
-        points = np.argwhere(stroke_mask)[:, ::-1].astype(np.float32) # pixcel cordinates
-        # min lenght on a valid relfection
-        # area thershold for rectangle sides
+        points = np.argwhere(stroke_mask)[:, ::-1].astype(np.float32) # pixel coordinates
+        # min length on a valid reflection
+        # area threshold for rectangle sides
         # The threshold applies to the length of the long side in pixels.
         if max(cv.minAreaRect(points)[1]) >= 45:
             line_masks.append(stroke_mask)  # clean list of reflections
@@ -134,8 +176,8 @@ def main(images, vis=True):
     combined_heatmap = heatmap(hsv_canny | reflection_mask, vis=False)
 
     # 3. Build initial clusters without merging ambiguous labels.
-    # First round of segmemntation
-    cluster_mask = (clusters | reflection_mask)  # connecting fragmentet clusters with the reflection
+    # First round of segmentation
+    cluster_mask = (clusters | reflection_mask)  # connecting fragmented clusters with the reflection
     base_count, labels = cv.connectedComponents(clusters, connectivity=8)
     combined_count, combined_labels = cv.connectedComponents(cluster_mask, connectivity=8)
     num_labels = base_count
@@ -153,11 +195,9 @@ def main(images, vis=True):
     # ==================================================================================
     # EDGE CASES:
     # 4. Keep weak clusters if they have a valid tube shape or heat support
-    filter_weak_clusters(
-        labels, combined_heatmap, min_cluster_support, fragment_max_area, fragment_gap
-    )
+    filter_weak_clusters(labels, combined_heatmap, min_cluster_support, fragment_max_area, fragment_gap)
 
-    # 5. Merge appropiate clusters overlapping with a relfection line
+    # 5. Merge appropriate clusters overlapping with a reflection line
     merge_fragmented_clusters(labels, line_masks, 800, fragment_max_area, fragment_gap)
 
     # 6. Split large clusters
@@ -173,7 +213,7 @@ def main(images, vis=True):
         mask = (result_labels == label)
         ys, xs = np.where(mask)
         position = (float(xs.mean()), float(ys.mean())) # mean position
-        points = np.column_stack((xs, ys)).astype(np.float32) # cluster cordinates
+        points = np.column_stack((xs, ys)).astype(np.float32) # cluster coordinates
         box = cv.boxPoints(cv.minAreaRect(points)) # find rectangle corners
         detections.append({
             "label": int(label),
@@ -184,26 +224,7 @@ def main(images, vis=True):
         })
 
     if vis:
-        overlay = cv.cvtColor(org_im, cv.COLOR_BGR2RGB)
-        for detection in detections:
-            color_ = (
-                (detection["label"] * 50) % 256,
-                (detection["label"] * 100) % 256,
-                (detection["label"] * 150) % 256
-            )
-            corners = np.rint(detection["box"]).astype(np.int32)
-            center = tuple(map(int, detection["position"])) # int(x,y)
-            cv.polylines(overlay, [corners], True, (0, 240, 255), 2, cv.LINE_AA) # draw box
-            cv.circle(overlay, center, 5, (20, 20, 20), cv.FILLED, cv.LINE_AA)
-            cv.circle(overlay, center, 4, color_, cv.FILLED, cv.LINE_AA)
-            caption = str(detection["label"])
-            caption_position = (center[0] + 6, center[1] - 6)
-            for color, width in (((20, 20, 20), 4), ((255, 255, 255), 2)):
-                cv.putText(
-                    overlay, caption, caption_position, cv.FONT_HERSHEY_SIMPLEX,
-                    0.55, color, width, cv.LINE_AA
-                )
-        display_images([("Rør med roterte bokser og posisjon", overlay)])
+        visualize_segmentation(images, detections, combined_heatmap)
 
     return detections
 
@@ -230,8 +251,8 @@ def evaluate(processed_images, expected_counts, vis=False):
 
 
 if __name__ == "__main__":
-    vis = True
-    images = ["TubesDataset/0003.png"]  # None for all
+    vis = True # visualization
+    images = ["TubesDataset/0014.png"]  # None for all
 
     with open("TubesDataset/annotations.json", encoding="utf-8") as file:
         annotations = json.load(file)

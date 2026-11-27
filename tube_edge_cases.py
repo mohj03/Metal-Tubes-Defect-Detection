@@ -15,7 +15,6 @@ def draw_line(shape, line, width):
     cv.line(mask, (x1, y1), (x2, y2), 255, width)
     return mask > 0
 
-
 def shared_clusters(line_mask, label_image):
     """Find cluster IDs that overlap with a line by at least 10 pixels"""
     ids, counts = np.unique(label_image[line_mask], return_counts=True)
@@ -34,7 +33,7 @@ def merge_nearby_fragments(labels, max_area, max_gap):
             return
 
         nearest = None
-        best_gap = max_gap # max allowed leanght between fragments and clusters
+        best_gap = max_gap # max allowed length between fragments and clusters
         for fragment in fragment_ids:
             ys, xs = np.where(labels == fragment)
 
@@ -81,7 +80,7 @@ def has_tube_shape(mask, min_rec=2.5):
     """Checks the cluster "looks" like a tube, defnied 
         by observations
     """
-    ys, xs = np.where(mask) # cordinates for each pixcel
+    ys, xs = np.where(mask) # coordinates for each pixel
     if len(xs) < 2200: # size check
         return False
 
@@ -109,7 +108,7 @@ def distinct_strokes(first, second, angle_limit):
     if abs(np.dot(direction, previous)) <= angle_limit: # parallel check
         return True
     
-    if not (is_full and previous_is_full): # if atleast 80% off both is inside the cluster
+    if not (is_full and previous_is_full): # if atleast 80% of both is inside the cluster
         return False
 
     first_points = np.argwhere(support)[:, ::-1] 
@@ -123,14 +122,14 @@ def distinct_strokes(first, second, angle_limit):
     second_axis = second_points @ previous
 
     overlap = min(first_axis.max(), second_axis.max()) - max(first_axis.min(), second_axis.min())
-    # Find the length of each projected stroke
+    # find the length of each projected stroke
     first_length = first_axis.max() - first_axis.min()
     second_length = second_axis.max() - second_axis.min()
 
-    # Minimum required overlap
+    # minimum required overlap
     min_overlap = 0.45 * min(first_length, second_length)
 
-    # Check distance and overlap
+    # check distance and overlap
     return separation >= 30 and overlap >= min_overlap
 
 def filter_weak_clusters(labels, combined_heatmap, min_cluster_support, fragment_max_area, fragment_gap):
@@ -148,7 +147,7 @@ def filter_weak_clusters(labels, combined_heatmap, min_cluster_support, fragment
     # Filter weak clusters and merge fragments that have tube shape.
     weak = np.zeros_like(labels)
     if np.any(combined_heatmap):
-        near_heat = euclidean_distance(combined_heatmap == 0) <= 8 # mask of the heatmap +8 pixcels from non 0
+        near_heat = euclidean_distance(combined_heatmap == 0) <= 8 # mask of the heatmap +8 pixels from non 0
     else:
         near_heat = np.zeros_like(labels, dtype=bool)
 
@@ -159,7 +158,7 @@ def filter_weak_clusters(labels, combined_heatmap, min_cluster_support, fragment
         if combined_heatmap[pixels].mean() >= min_cluster_support or has_tube_shape(pixels):
             continue
 
-        # A well-formed cluster can be supported along its edge.
+        # a well-formed cluster can be supported along its edge.
         if near_heat[pixels].mean() >= (min_cluster_support * (4/3)) and has_tube_shape(pixels, min_rec=2.2):
             continue
 
@@ -169,7 +168,7 @@ def filter_weak_clusters(labels, combined_heatmap, min_cluster_support, fragment
     merge_nearby_fragments(weak, fragment_max_area, fragment_gap) # merge if possible
     for label in np.unique(weak[weak > 0]):
         pixels = weak == label
-        if has_tube_shape(pixels): # cheks if new merge has valid tube shape
+        if has_tube_shape(pixels): # checks if new merge has valid tube shape
             labels[pixels] = label
 
 
@@ -184,8 +183,6 @@ def merge_fragmented_clusters(labels, line_masks, min_cluster_area, fragment_max
 
     Labels are updated directly.
     """
-
-    # Hvis flere klustere treffes av samme strek, blir det største ankeret.
     for corridor in line_masks:
         ids = shared_clusters(corridor, labels)
         if len(ids) < 2:
@@ -204,7 +201,7 @@ def merge_fragmented_clusters(labels, line_masks, min_cluster_area, fragment_max
 
     merge_nearby_fragments(labels, fragment_max_area, fragment_gap) # merged if allowed
 
-    # Count large clusters plus shorter clusters supported by a stroke.
+    # count large clusters plus shorter clusters supported by a stroke.
     stroke_supported = set()
     for corridor in line_masks:
         stroke_supported.update(shared_clusters(corridor, labels))
@@ -254,7 +251,7 @@ def split_clusters_by_strokes(labels, point_labels):
         y_min, y_max = ys.min(), ys.max() + 1
         x_min, x_max = xs.min(), xs.max() + 1
 
-        local_labels = labels[y_min:y_max, x_min:x_max] # rectangle oround
+        local_labels = labels[y_min:y_max, x_min:x_max] # rectangle around
         cluster = (local_labels == label)
 
         local_strokes = point_labels[y_min:y_max, x_min:x_max].copy() # strokes inside 
@@ -275,7 +272,9 @@ def split_clusters_by_strokes(labels, point_labels):
                 stroke_points, cv.DIST_L2, 0, 0.01, 0.01
             ).ravel()[:2]
 
-            length = np.ptp(stroke_points @ direction) # leanght on the stroke
+            # length of the stroke
+            projections = stroke_points @ direction
+            length = np.max(projections) - np.min(projections)
 
             if length >= min_stroke_length:
                 total_pixels = np.count_nonzero(point_labels == stroke_id)
@@ -283,7 +282,7 @@ def split_clusters_by_strokes(labels, point_labels):
 
                 candidates.append((direction, stroke, is_full))
 
-        # Use Hough if fewer than two strokes were found (possible overlap)
+        # ese Hough if fewer than two strokes were found (possible overlap)
         if len(candidates) < 2:
 
             candidates = []
@@ -311,7 +310,7 @@ def split_clusters_by_strokes(labels, point_labels):
 
                     candidates.append((direction, support, False))
 
-        # Keep strokes that are different enough
+        # keeps strokes that are different enough
         strokes = []
         for candidate in candidates: 
             if all( # if a stroke is distinct from the rest
@@ -323,11 +322,11 @@ def split_clusters_by_strokes(labels, point_labels):
         if len(strokes) < 2:
             continue
 
-        # Calculate distance from each cluster pixel to each stroke
+        # calculate distance from each cluster pixel to each stroke
         distances = []
 
         for direction, support, is_full in strokes:
-            distance = euclidean_distance(~support) # distance from each pixcel to the closes stroke pixcel
+            distance = euclidean_distance(~support) # distance from each pixel to the closest stroke pixel
             distances.append(distance)
 
         distances = np.stack(distances)
@@ -337,7 +336,7 @@ def split_clusters_by_strokes(labels, point_labels):
 
         # remove strokes that would create very small parts
         areas = np.bincount(assigned, minlength=len(strokes))
-        keep = areas >= min_part_area # only if it is large enough for a seperate cluster
+        keep = areas >= min_part_area # only if it is large enough for a separate cluster
 
         if np.count_nonzero(keep) < 2:
             continue
@@ -348,7 +347,7 @@ def split_clusters_by_strokes(labels, point_labels):
         # give each part its own cluster ID
         part_labels = [label]
         for i in range(np.count_nonzero(keep) - 1):
-            part_labels.append(next_label + i) # assign each pixcel
+            part_labels.append(next_label + i) # assign each pixel
 
         part_labels = np.array(part_labels)
 
