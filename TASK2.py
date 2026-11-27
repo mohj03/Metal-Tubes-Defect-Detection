@@ -27,45 +27,59 @@ def measure_reflection(reflection):
 
     ys, xs = np.where(reflection)
     points = np.column_stack((xs, ys)).astype(np.float32)
+
     _, (width, height), _ = cv.minAreaRect(points)
     vx, vy, x0, y0 = cv.fitLine(points, cv.DIST_L2, 0, 0.01, 0.01).ravel()
-    # Project the offset onto the normal to the line.
+
+    # project the offset onto the normal to the line.
     distances = -(points[:, 0] - x0) * vy + (points[:, 1] - y0) * vx
     return max(width, height), np.std(distances)
 
 
 def evaluate(processed_images, expected_counts, vis=False):
+    """Evaluate anomaly counts per image.
+
+    1. Measure reflection length and spread inside each tube box.
+    2. Flag Canny-only tubes, boxes without cluster pixels, and spread above 8 px.
+    3. Flag reflections at or below 70% of the longest unless the cluster box is long and narrow.
+
+    """
     correct = 0
     errors = []
     header = f"{'Image':<12} {'Found':>7} {'Expected':>8} {'Error':>7}"
     print(header)
     print("-" * len(header))
 
+    # looking at every image
     for image, imgs in processed_images.items():
+
         filename = image.rsplit("/", 1)[-1]
         original, _, cluster_mask, reflection_mask = imgs
         detections = main(imgs, vis=False)
+
         measurements = []
+        # looking at every boundingbox
         for detection in detections:
             inside = np.zeros_like(cluster_mask, dtype=np.uint8)
-            box = np.rint(detection["box"]).astype(np.int32)
-            cv.fillConvexPoly(inside, box, 1)
-            inside = inside > 0
+            box = detection["box"].astype(np.int32)
+            cv.fillConvexPoly(inside, box, 1) # curr boundingbox
+            inside = (inside > 0)
             length, spread = measure_reflection(inside & (reflection_mask > 0))
-            has_cluster = np.any(cluster_mask[inside])
-            measurements.append((length, spread, has_cluster))
 
-        min_length = 0.70 * max((length for length, _, _ in measurements), default=0)
+            has_cluster = np.any(cluster_mask[inside])
+            measurements.append((length, spread, has_cluster))  
+
+        min_length = 0.70 * max((length for length, _, _ in measurements), default=0) # defect is 30% shorter than the biggest one
         anomalies = []
         for detection, (length, spread, has_cluster) in zip(detections, measurements):
             if not has_cluster or detection["canny_candidate"] or spread > max_reflection_std:
                 anomalies.append(detection)
                 continue
 
-            # A long, narrow cluster can make up for a missing or short reflection.
+            # a long, narrow cluster can make up for a missing reflection or short reflection.
             if length <= min_length:
                 box_width, box_length = sorted(cv.minAreaRect(detection["box"])[1])
-                if box_length < 2.5 * box_width or box_length <= min_length:
+                if box_length < 2.5 * box_width or box_length <= min_length: # tube definition
                     anomalies.append(detection)
 
         expected = expected_counts[filename]

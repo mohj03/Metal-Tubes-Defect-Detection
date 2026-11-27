@@ -164,7 +164,7 @@ def main(images, vis=True):
     split_clusters_by_strokes(labels, point_labels)
     split_unusually_long_clusters(labels)
 
-    # 7. Legg til rør fra Canny-kantområder uten kontakt med klustrene.
+    # 7. Add canny-backed regions without clusters
     result_labels, canny_candidates = add_canny_candidates(labels, hsv_canny)
 
     # 8. Find mean position for each cluster, and fit a bounding box

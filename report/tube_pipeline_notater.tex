@@ -1,0 +1,263 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,graphicx,url}
+\usepackage[margin=24mm]{geometry}
+\graphicspath{{study_figures/}{report/study_figures/}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\lVert #1\rVert_2}
+\newcommand{\bilde}[3]{\begin{center}\includegraphics[width=#1\linewidth]{#2}\par
+\smallskip\small #3\end{center}}
+\title{Fra piksler til rør\\[4pt]\large Egne notater om matten i Task 1 og Task 2}
+\author{}
+\date{}
+\begin{document}
+\maketitle
+
+\section{Hva går gjennom pipelinen?}
+
+I \code{TASK1.py} går ett bilde gjennom tre masker. Maskene brukes sammen for å finne ut hvilke piksler som hører til hvert rør. Til slutt får hvert rør en etikett, et sentrum og en rotert boks. I \code{TASK2.py} går vi inn i hver boks og spør om refleksjonen ser ut som den vi forventer fra et vanlig rør.
+
+\begin{center}
+\begin{tabular}{@{}lcl@{}}
+Foto & $\longrightarrow$ & tre binære masker \\
+Masker & $\longrightarrow$ & varmekart og første etiketter \\
+Etiketter & $\longrightarrow$ & filtrering, sammenslåing, deling og nye kandidater \\
+Rør & $\longrightarrow$ & boks, refleksjonsmåling og avgjørelse i Task 2
+\end{tabular}
+\end{center}
+
+\subsection*{Indeks, koordinat, maske og etikett}
+Et bilde er en matrise. I NumPy bruker vi \code{bilde[y, x]}, altså rad først og kolonne etterpå. Geometrifunksjonene i OpenCV får et punkt som $(x,y)$. Derfor skriver koden ofte \code{ys, xs = np.where(mask)} og stabler så \code{xs} før \code{ys}. $x$ øker mot høyre i bildet og $y$ nedover.
+
+En \textbf{binær maske} svarer på ett spørsmål per piksel. I NumPy kan dette være \code{True}/\code{False}. I et bilde er det ofte 255 for hvitt og 0 for svart. Et \textbf{etikettbilde} har derimot 0 for bakgrunn, 1 for gruppe 1, 2 for gruppe 2 og så videre. Uttrykket \code{labels == 2} gjør etikett 2 om til en binær maske. Samme etikett kan dekke frakoblede piksler etter en sammenslåing.
+
+\subsection*{Hva betyr 8-connected?}
+En hvit piksel har opptil åtte naboer. Det inkluderer fire kanter og fire diagonaler. Under 8-kobling er de to hvite pikslene i matrisen
+$\left[\begin{smallmatrix}1&0\\0&1\end{smallmatrix}\right]$
+én komponent. Ved 4-kobling ville de vært to. \code{connectedComponentsWithStats} gir også areal og en boks langs bildeaksene. Areal betyr antall piksler. Når koden senere trenger selve rørets retning, bruker den den roterte boksen fra \code{minAreaRect}.
+
+\newpage
+\section{Preprosessering i \texttt{preprocess}}
+
+Funksjonen returnerer originalbildet \code{img} sammen med de tre maskene.
+\begin{center}
+\code{hsv\_s\_canny}\qquad\code{opened\_cluster}\qquad\code{reflection\_mask}
+\end{center}
+
+\subsection*{Fargemasken: HSV, Lab, Otsu og opening}
+\begin{enumerate}
+\item OpenCV leser fargebildet som BGR. Koden lager også HSV og Lab. HSV-kanalen $S$ måler fargemetning. Lab-kanalen $a^*$ beskriver hvor fargen ligger langs grønn--rød-aksen.
+\item Otsu prøver terskler i kanalens histogram. For terskel $t$ får de to gruppene andeler $\omega_0,\omega_1$ og gjennomsnitt $\mu_0,\mu_1$. Metoden velger terskelen som maksimerer
+\[
+ \omega_0(t)\omega_1(t)\bigl(\mu_0(t)-\mu_1(t)\bigr)^2.
+\]
+En terskel som lager to godt adskilte grupper får høy verdi. Hvis gruppene for en terskel har lik størrelse og middelverdiene er 20 og 100, er verdien $0.5\cdot0.5\cdot80^2=1600$. Terskelen beregnes separat for hver kanal og hvert bilde.
+\item HSV-masken inverteres slik at lave $S$-verdier beholdes. Lab-masken beholder høye $a^*$-verdier. \code{\&} beholder bare piksler som passerer begge. Et mettet blått rør kan derfor falle ut av fargemasken.
+\item Opening med et rektangel på $18\times18$ er erosjon fulgt av dilasjon. Ved erosjon må hele elementet få plass i det hvite området. Ved dilasjon spres de hvite områdene ut fra pikslene som overlevde. Tynne partier og små øyer kan dermed forsvinne.
+\end{enumerate}
+
+\bilde{0.85}{opening.png}{Syntetisk maske med et mindre element, $5\times5$, så en kan se hva hver operasjon gjør. Den smale utstikkeren og den lille øya kommer ikke tilbake etter dilasjonen.}
+
+\subsection*{Refleksjonsmasken: terskel på blåkanalen}
+Piksler med $B>220$ blir hvite. Lyse, nesten hvite metallrefleksjoner kan ha høy blåverdi. Deretter beholdes bare 8-koblede komponenter på minst 200 piksler. Hvis tre lyse komponenter har størrelse 199, 200 og 400, beholdes de to siste. En svak eller oppstykket refleksjon kan bli borte selv om røret er synlig i bildet.
+
+\newpage
+\section{Canny og varmekartet}
+
+\subsection*{Fra metningsbilde til kantmaske}
+\begin{enumerate}
+\item \textbf{Glatt med Gauss.} I et vindu på $7\times7$ erstattes hver verdi med et vektet gjennomsnitt av naboene. Vektene avtar med avstand fra midten. Små endringer fra piksel til piksel påvirker dermed kantdeteksjonen mindre.
+\item \textbf{Finn endring.} Canny beregner gradienten, altså hvor raskt metningen endrer seg og i hvilken retning. På en rørkant peker gradienten på tvers av kanten. Områder med omtrent lik metning har liten gradient.
+\item \textbf{Gjør kanten tynn.} Canny sammenligner styrken med naboer i gradientretningen og beholder lokale topper. Flere sterke responsverdier på rad på tvers av kanten blir da til en tynnere struktur.
+\item \textbf{Bruk to terskler.} Verdier over 150 kan starte en sterk kant. Verdier mellom 50 og 150 kan beholdes når de er koblet til sterk kant. En isolert svak respons faller bort. Canny kan dermed følge deler av en kontur der refleksjonsmasken er tom.
+\end{enumerate}
+
+\subsection*{Hva beregner \texttt{heatmap}?}
+\begin{enumerate}
+\item Finn unionen $E$ med \code{hsv\_canny | reflection\_mask}. Én eller begge kilder gjør en piksel til evidens.
+\item For hver piksel $p$, bruk \code{euclidean\_distance} til å finne
+$d(p)=\min_{q\in E}\norm{p-q}$. Avstandstransformen i OpenCV søker etter nærmeste \emph{null}. Derfor sender koden inn \code{evidence == 0}, slik at evidenspikslene blir null i akkurat dette kallet.
+\item Regn $H(p)=\exp(-d(p)^2/50)$ hvis $d(p)\leq 10$, ellers $H(p)=0$. Tallet 50 kommer fra $2\sigma^2$ med $\sigma=5$. Hvis evidensbildet er tomt, blir hele kartet null.
+\end{enumerate}
+
+\bilde{0.96}{heat.png}{Samme syntetiske bilde i tre steg. Varmen kommer fra avstanden til nærmeste hvite piksel. Overlappende striper legges ikke sammen.}
+
+Ved $d=0$, $5$ og $10$ er vektene henholdsvis $1.00$, $0.61$ og $0.14$. Rett utenfor 10 settes vekten til null. Om to kanter begge er 5 px unna, er vekten fortsatt $0.61$. Gauss-filteret før Canny glatter metningsbildet. Gauss-formelen her omgjør en avstand til støtte.
+
+\newpage
+\section{Første labels og filtrering i Task 1}
+
+\subsection*{\texttt{main}, steg 1--3}
+\begin{enumerate}
+\item Nummerer refleksjonenes 8-koblede komponenter i \code{point\_labels}. For hver komponent beregnes en minste rotert boks. Har den en langside på minst 45 px, legges pikselmasken i \code{line\_masks}. Dette er eksisterende refleksjonspiksler. Selve refleksjonsmasken blir ikke endret.
+\item Beregn varmekartet fra Canny og hele refleksjonsmasken. Også korte refleksjoner kan bidra her.
+\item Lag opprinnelige labels fra fargemasken. Finn så nye komponenter i unionen av fargemasken og refleksjonsmasken. For hver komponent sjekkes hvilke opprinnelige labels den omfatter.
+\end{enumerate}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+Opprinnelige labels inni komponenten & Handling \\
+\hline
+Ingen & Opprett ny etikett for komponenten.\\
+Én, for eksempel 4 & Bruk 4 på hele den kombinerte komponenten.\\
+Flere, for eksempel 4 og 9 & Behold 4 og 9 hver for seg i dette steget.
+\end{tabular}
+\end{center}
+I siste tilfelle kan en refleksjon gå mellom to områder. Refleksjonspikslene som ligger i gapet får ingen ny label her. \code{initial\_labels} regnes ut i \code{main}, mens filtreringen arbeider videre på \code{labels}.
+
+\subsection*{\texttt{has\_tube\_shape}: hvor rektangulært er et cluster?}
+Ta alle $(x,y)$-punktene i masken. \code{minAreaRect} finner et rektangel som omslutter dem med minst mulig areal, og som får lov å rotere. Funksjonen legger 1 til de to målte sidene for å ta med pikselbredden. Med langside $L$, kortside $W$ og areal $A$ i piksler blir
+\[
+ \text{sideforhold}=\frac{L}{W},\qquad
+ \text{fyllgrad}=\frac{A}{LW}.
+\]
+Med $L=110$, $W=30$ og $A=2300$ får vi sideforhold $3.67$ og fyllgrad $0.70$. Dette passerer: $A\geq2200$, $L\geq85$, $W\geq18$, $L/W\geq2.5$ og fyllgrad $\geq0.55$. Funksjonen returnerer \code{True} eller \code{False}.
+
+\subsection*{\texttt{filter\_weak\_clusters}: tre måter å bli med videre}
+\begin{enumerate}
+\item Ta gjennomsnittet av $H$ over \emph{alle} pikslene i clusteret. Det beholdes ved minst $0.15$, eller hvis \code{has\_tube\_shape} godkjenner det. Hvis 300 av 1000 piksler har $H=0.5$ og resten null, blir snittet $0.15$.
+\item Lag en egen boolsk maske for piksler innen 8 px fra \emph{positivt} varmekart. Hvis minst $0.15\cdot4/3=0.20$ av clusteret ligger der, sjekkes formen med sideforhold $2.2$ i stedet for $2.5$. Resten av formkravene gjelder fortsatt. Dette er en ekstra avstandssjekk på kartet som allerede er laget.
+\item Flytt svake labels til en egen matrise. Slå sammen nærliggende svake fragmenter. Legg dem tilbake bare hvis det resulterende området består den vanlige formtesten.
+\end{enumerate}
+
+\newpage
+\section{Hvordan fragmenter blir slått sammen}
+Koden kan oppdage to forskjellige typer tegn på én felles tube: pikslene ligger nær hverandre, eller to områder overlapper den samme refleksjonskomponenten.
+
+\subsection*{\texttt{merge\_nearby\_fragments}: avstand mellom områder}
+\begin{enumerate}
+\item Tell arealet til alle positive labels. Område med under \code{max\_area} piksler er et fragment. I den vanlige pipelinen er grensen 2000 piksler.
+\item Lag en lokal søkeboks rundt hvert fragment, utvidet med \code{max\_gap} (16 px i pipelinen). \code{local != fragment} gir null der fragmentet ligger. Avstandstransformen gir dermed avstanden tilbake til fragmentet for hver nabopiksel.
+\item Se bare på piksler fra andre positive labels. Gapet er minste euklidiske avstand mellom en piksel i fragmentet og en i naboen. Det er en kant-til-kant-avstand i pikselkoordinater. Hvis mulige mål ligger like nær fragmentet, foretrekkes det største.
+\item Gjennomfør én sammenslåing med minste gap dersom det er høyst 16. Gi alle fragmentpikslene naboens label, og regn ut avstander og størrelser på nytt fra oppdatert bilde. Stopp når det ikke finnes et gyldig par.
+\end{enumerate}
+
+\textbf{Eksempel.} Fragment A har 250 piksler og ligger 8 px fra B og 12 px fra C. A kan få Bs etikett. Dersom B opprinnelig hadde 1900 piksler, har B nå 2150 og er ikke lenger et fragment. Det kan fremdeles være \emph{mål} for andre sammenslåinger. De svarte pikslene i mellomrommet blir ikke fylt.
+
+\subsection*{\texttt{shared\_clusters} og \texttt{merge\_fragmented\_clusters}}
+\begin{enumerate}
+\item Bruk de lange refleksjonsmaskene fra steg 1. For hver maske teller \code{shared\_clusters} hvor mange markerte piksler som har hver label. Bakgrunn og labels med færre enn 10 overlappende piksler fjernes fra listen.
+\item Hvis minst to labels treffer, velges den største som anker. Hvert annet område med areal under 800 kan få samme label. Med arealer 2600, 600 og 1000 får 600-pikselområdet ankerets label, mens 1000-pikselområdet beholdes i dette delsteget.
+\item Kjør \code{merge\_nearby\_fragments} etterpå. Denne kan slå sammen små naboer selv uten felles refleksjon.
+\item Beregn strekstøtten på nytt med de oppdaterte labelene. Et område under 800 piksler fjernes hvis ingen lang refleksjonsmaske overlapper minst 10 piksler av området.
+\end{enumerate}
+
+Arealgrensen 800 brukes altså til strekbasert sammenslåing og rydding. Tallet 2000 brukes til å velge fragmenter i avstandssøket. Begge endrer hvilken ID piksler har. Etter en sammenslåing kan to adskilte grupper derfor telles som ett rør.
+
+\newpage
+\section{Deling etter refleksjon: finn kandidater}
+
+\subsection*{\texttt{split\_clusters\_by\_strokes}, del 1}
+\begin{enumerate}
+\item Et cluster under 400 piksler kan ikke gi to deler på minst 200 hver. Skip også et kompakt cluster med sideforhold $\leq2$ og fyllgrad $\geq0.80$. En deformert tube kan ha flere refleksjonsretninger selv om den er ett objekt.
+\item Beskjær til clusterets boks langs bildeaksene. Sett refleksjonslabels utenfor clusteret til null i den lokale kopien. Hver eksisterende refleksjons-ID med minst 10 piksler prøves som kandidat.
+\item Bruk \code{cv.fitLine} med \code{DIST\_L2} for å finne en enhetsvektor $v$. Prosjiser alle strekpikslene $p_i$ på $v$ med $p_i^\top v$. Streklengden er største minus minste projeksjon. Hvis projeksjonene ligger fra 12 til 91, er spennet 79 px. Minstekravet er 75 px. Registrer om minst 80\,\% av den opprinnelige refleksjonen ligger i clusteret.
+\item Hvis dette gir færre enn to kandidater, erstattes kandidatlisten med linjesegmenter fra \code{HoughLinesP}. Segmentene sorteres fra lengst til kortest. \code{draw\_line} tegner et midlertidig bånd med bredde 7, og snittet med refleksjonsmasken velger faktiske støttepiksler. Den opprinnelige refleksjonsmasken forblir som før. Hough-kandidater får \code{is\_full=False}.
+\end{enumerate}
+
+\subsection*{Hva regner Hough på?}
+En linje kan beskrives med normalvinkel $\theta$ og fortegnet avstand $\rho$ fra origo:
+\[
+ x\cos\theta+y\sin\theta=\rho.
+\]
+Et enkelt bildepunkt passer til mange linjer. Ved å prøve ulike $\theta$ finner man de mulige parene $(\theta,\rho)$ for punktet. Mange piksler som ligger langs samme linje støtter samme par. Punktene $(2,1),(2,3),(2,5)$ ligger alle på linjen $x=2$. De gir alle $\rho=2$ ved $\theta=0^\circ$.
+
+\bilde{0.78}{hough.png}{Hver kurve kommer fra én piksel. Møtet ved normalvinkel $0^\circ$ og $\rho=2$ er en felles linje i bildet.}
+Den probabilistiske varianten gir endepunkter for segmenter. Koden bruker oppløsning 1 px for $\rho$, $1^\circ$ for $\theta$, stemmeterskel 30, minimumslengde 75 px og maksimalt gap 5 px. Gapet brukes her til å finne kandidater langs en mulig linje. Splittet bruker støtte fra refleksjonspikslene som faktisk finnes.
+
+\newpage
+\section{Deling etter refleksjon: skille og fordele}
+
+\subsection*{\texttt{distinct\_strokes}: er to streker fra ulike rør?}
+\begin{enumerate}
+\item For to enhetsvektorer $u,v$ er vinkelen mellom de uorienterte linjene
+$\alpha=\arccos(|u^\top v|)$. Absoluttverdien gjør at en pil mot venstre og en pil mot høyre langs samme akse representerer samme linjeretning. Koden kan sammenligne direkte med $\cos25^\circ\approx0.906$. For eksempel gir $|u^\top v|=0.80$ en vinkel på omtrent $37^\circ$, som passerer.
+\item For en vinkel under $25^\circ$ må begge kandidatene ha \code{is\_full=True}. Bruk normalen $n=(-v_y,v_x)$ til å finne avstanden på tvers: $|(\bar p_1-\bar p_2)^\top n|$, der $\bar p_1,\bar p_2$ er gjennomsnittspunktene til de to maskene. Den må være minst 30 px.
+\item Sammenlign også projeksjonsintervallene langs $v$. For $[10,100]$ og $[40,125]$ er overlappslengden $100-40=60$. Den korteste streken har spenn 85, og $0.45\cdot85=38.25$. Eksemplet har nok overlapp. To nesten parallelle streker som følger hverandre side om side kan dermed passere. To biter etter hverandre langs samme akse gjør normalt ikke det.
+\end{enumerate}
+Koden går gjennom kandidatene i rekkefølge. En ny kandidat må være forskjellig fra \emph{alle} de som allerede er tatt med. Nesten parallelle Hough-kandidater kan ikke gå gjennom side-om-side-regelen fordi de ikke er merket som fulle.
+
+\subsection*{\texttt{split\_clusters\_by\_strokes}, del 2: tildel piksler}
+Hvis det finnes minst to godkjente streker, beregnes et avstandsbilde per strek. For støttepikslene $S_j$ til strek $j$ får en clusterpiksel $p$ den gruppen som minimerer
+$\displaystyle d_j(p)=\min_{q\in S_j}\norm{p-q}$.
+Avstanden måles til nærmeste faktiske støttepiksel. Ligger de nærmeste punktene på strekene i $(4,3)$ og $(8,5)$ for pikselen $(4,5)$, er avstandene henholdsvis 2 og 4. Pikselen får da etiketten til den første streken. Nær enden av en kort strek kan en annen strek vinne.
+
+\bilde{0.92}{split.png}{Her er fordelingen vist for to syntetiske streker som antas godkjent. Hver piksel i clusteret får fargen til den nærmeste streken. Bildet viser tildelingen og er skalert uavhengig av de faktiske tersklene.}
+
+Tell arealet til de foreløpige delene. Hvis delene har 700, 140 og 600 piksler, fjernes kandidaten som bare fikk 140. Pikslene der blir fordelt på nytt mellom de to gjenværende strekene. Med under to gjenværende kandidater beholdes hele clusteret. Ved deling beholder første del den opprinnelige ID-en, og de andre får nye ID-er.
+
+\newpage
+\section{Siste telling og hva Task 1 returnerer}
+
+\subsection*{\texttt{split\_unusually\_long\_clusters}}
+\begin{enumerate}
+\item Mål langsiden i den roterte boksen til hver label. Velg retningen til langsiden, også når \code{minAreaRect} returnerer den som høyden.
+\item Med minst to labels beregnes gjennomsnittet $\bar L$ av langsidene, inkludert kandidaten selv. Del positive lengder som er minst $1.30\bar L$. Med lengder 90, 100, 110 og 170 blir snittet $117.5$ og terskelen $152.75$. Bare 170 passerer.
+\item Bruk $v=(\cos\theta,\sin\theta)$ og projeksjoner $t=p^\top v$. Del ved $(\min t+\max t)/2$. Pikslene over dette midtpunktet får ny ID. Midt i spenn er noe annet enn medianen. Hvis nesten alle pikslene ligger i den ene enden, kan delene bli ulike i størrelse.
+\end{enumerate}
+
+\subsection*{\texttt{add\_canny\_candidates}}
+\begin{enumerate}
+\item Gjør Canny-kantene tykkere med dilasjon med en ellipse på $9\times9$. Bruk deretter closing med en ellipse av samme størrelse. Closing er dilasjon fulgt av erosjon. Små mellomrom mellom tykke kantbiter kan da lukkes.
+\item Nummerer de 8-koblede kantregionene. Når en kantregion deler selv én piksel med en eksisterende tube-label, forkastes hele regionen som ny kandidat. Den sjekken hindrer dobbelttelling når Canny finner konturen på et rør som allerede er med.
+\item De resterende regionene må ha areal $750\leq A\leq8500$, kortside $W\geq25$, langside $L\leq165$ og $L/W\leq2$. Disse målene tas fra en rotert boks, med unntak av arealet som telles direkte. Kandidaten får ny ID, og pikslene merkes i en egen boolsk Canny-kandidatmaske.
+\end{enumerate}
+Her ser koden etter kompakte objekter som ble oversett tidligere. Den vanlige formtesten for fargeclustere har motsatt mål for sideforhold: der leter vi etter lange, smale former.
+
+\subsection*{Fra etikettbilde til \texttt{detections}}
+For hver ID lages én oppføring med \code{label}, \code{position}, \code{mask}, \code{box} og \code{canny\_candidate}. Posisjonen er tyngdepunktet når alle labelpiksler har lik vekt:
+\[
+ (\bar x,\bar y)=\left(\frac{1}{N}\sum_i x_i,\frac{1}{N}\sum_i y_i\right).
+\]
+Punktene $(0,1),(2,1),(4,4)$ gir posisjonen $(2,2)$. \code{boxPoints(minAreaRect(...))} gir fire hjørner rundt labelens piksler. Gjennomsnittspunktet og boksens sentrum trenger ikke sammenfalle, særlig for skjeve former. Tellingen er lengden på lista. \code{display\_images} ordner paneler og kan beskjære rundt sentrum ved visning. \code{color\_clusters} skalerer ID-ene til 0--255 og bruker JET-farger for visning. Farger, bokstegning og etiketter i plottet inngår ikke i selve tellingen.
+
+\newpage
+\section{Task 2: refleksjonspunkter og minste kvadrater}
+
+\subsection*{\texttt{measure\_reflection}, steg 1: velg punktene}
+\begin{enumerate}
+\item Lag en fylt maske fra hjørnene i det roterte rektangelet (\code{fillConvexPoly}). Ta snittet av denne boksmasken og refleksjonsmasken. Bruk alle relevante refleksjoner \emph{innenfor boksen}. Refleksjonspikslene trenger ikke ligge i selve clusterlabelen.
+\item Finn komponenter i det klippede refleksjonsbildet. En tom maske gir lengde og spredning lik null. Ellers måles alle komponentene samlet, bortsett fra hvis den største har minst dobbelt så stort areal som \emph{summen} av de andre. Med arealer 200, 40 og 30 brukes bare 200. Med 200, 70 og 60 brukes alle.
+\item Den lengste siden i minste roterte boks rundt de valgte refleksjonspikslene er refleksjonslengden. Deretter tilpasses en linje til de samme punktene.
+\end{enumerate}
+
+\subsection*{Steg 2: hvilken linje er best?}
+En vilkårlig linje kan uttrykkes som $p_0+tv$, der $v=(v_x,v_y)$ har lengde én. En normalvektor er $n=(-v_y,v_x)$, siden $v^\top n=0$. Da er den fortegnede vinkelrette avstanden fra et punkt $p_i$ til linjen
+\[
+ d_i=(p_i-p_0)^\top n.
+\]
+Fortegnet sier hvilken side av linjen punktet ligger på. Den nærmeste posisjonen på linjen er $p_i-d_in$. Med \code{cv.fitLine} og \code{DIST\_L2} velges linjen som minimerer $\sum_i d_i^2$. Det er \textbf{ortogonal minste kvadraters metode}. En vanlig modell $y=ax+b$ minimerer vertikale avstander. For en nesten loddrett refleksjon passer den ortogonale formuleringen bedre, fordi den måler på tvers av linjen uansett retning.
+
+\subsection*{Hvor kommer linjeretningen fra?}
+For en fast enhetsnormal $n$, skriv $d_i=p_i^\top n-c$. Velger du $c$ som gjennomsnittet av $p_i^\top n$, minimeres summen av kvadratene. Den beste linjen går derfor gjennom middelpunktet $\bar p$. Med $q_i=p_i-\bar p$ og
+$C=\frac1N\sum_i q_iq_i^\top$ får vi
+\[
+ \frac1N\sum_i (q_i^\top n)^2=n^\top Cn.
+\]
+Velg normalen som gir minst variasjon. Det er egenvektoren til den minste egenverdien til $C$. Linjens retning har størst variasjon og er vinkelrett på normalen. Dette er den geometriske forbindelsen til PCA i to dimensjoner. Den forklarer hvorfor en lang smal punktsky får en linje langs den lange aksen.
+
+\newpage
+\section{Fra spredning til avgjørelse og evaluering}
+
+\subsection*{Steg 3: regn standardavviket}
+Funksjonen regner \code{np.std(distances)}, altså
+$s_d=\sqrt{\sum_i(d_i-\bar d)^2/N}$. I teorien er $\bar d=0$ for den ortogonale minste-kvadraterslinjen gjennom middelpunktet. Om avstandene er $(-2,0,2)$ px, er $s_d=\sqrt{8/3}\approx1.63$ px. Avstandene $(-12,0,12)$ gir $s_d\approx9.80$ px. Begge har null i gjennomsnitt, mens bare den siste passerer grensen $s_d>8$ for avvik.
+
+\bilde{0.98}{fit.png}{Syntetiske punkter og tilpassede linjer. De korte strekene viser avstanden vinkelrett til linjen. Eksemplene har samme skalering. En bøy øker punktspredningen; en bred, rett refleksjon kan også gjøre det.}
+
+\subsection*{\texttt{TASK2.evaluate}: bruk målingene}
+\begin{enumerate}
+\item Kjør Task 1 og mål hver boks. For hver boks lagres lengde, spredning og om det finnes minst én piksel fra den åpnede fargemasken inni boksen. Sett lengdegrensen til $0.70L_{\max}$ for bildet.
+\item Flagg røret hvis åpnet fargemaske er tom i boksen, hvis det kom fra Canny-kandidattrinnet, eller hvis $s_d>8$. Ved $s_d=8$ alene går røret videre.
+\item Hvis ingen av de tre sjekkene slo ut, sammenlign refleksjonens lengde med lengdegrensen. Er refleksjonen lengre enn grensen, godtas røret. Ved kort eller manglende refleksjon kan boksen likevel redde røret hvis boksens langside er strengt over grensen og minst $2.5$ ganger kortsiden.
+\end{enumerate}
+\textbf{Eksempel.} Er $L_{\max}=160$, blir grensen 112 px. En refleksjon på 100 px kan godtas når boksen er $130\times40$ px og ingen tidligere avvikssjekk har slått ut. En boks på $130\times60$ px består ikke smalhetskravet. Boksformen brukes her som reserve ved kort refleksjon.
+
+\subsection*{Evalueringsutskriften for begge oppgavene}
+\code{\_\_main\_\_} leser annotasjoner, velger bilder og preprosesserer dem. Task 1 bruker \code{n\_tubes} som fasit. Task 2 bruker antall defektbokser i \code{bboxes}. Begge skriver prediksjon, fasit og $e=\text{prediksjon}-\text{fasit}$ per bilde. For $e=(-1,0,1)$ er ett av tre bilder riktig og feilens standardavvik er $0.82$ rør. Dette standardavviket gjelder tellefeil \emph{mellom bilder}, i motsetning til $s_d$ som gjelder refleksjonspiksler \emph{inni én boks}. Selve evalueringsfunksjonene sjekker antallet. Ved visualisering tegner Task 1 posisjon og bokser fra detections, og Task 2 viser refleksjonsmasken og boksene rundt flaggede rør.
+
+\end{document}
