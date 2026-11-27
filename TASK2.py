@@ -117,7 +117,7 @@ def evaluate(processed_images, expected_counts, vis=False, *, reference_boxes=No
 
 if __name__ == "__main__":
     vis = True
-    images = ["TubesDataset/0001.png"]  # Use a list of dataset image paths to select a subset.
+    images = ["TubesDataset/0001.png"] 
     #images = None
 
     with open("TubesDataset/annotations.json", encoding="utf-8") as file:

@@ -1,6 +1,6 @@
 # Metal Tube Inspection
 
-Count metal tubes and detect anomalous tubes in photographs using classical image processing. Task 1 locates the tubes and draws rotated bounding boxes. Task 2 checks the reflections and other evidence inside those boxes.
+Count metal tubes and detect anomalous tubes in photographs using classical image processing. Task 1 locates the tubes and colores tube-clusters. Task 2 checks the reflections and other evidence inside those boxes, and draws bounding boxes around defect tubes.
 
 ## Setup
 
@@ -30,7 +30,7 @@ python TASK1.py
 python TASK2.py
 ```
 
-By default, Task 1 evaluates and displays `0003.png`. Task 2 evaluates the entire dataset and prints the results without opening plots.
+By default, Task 1 evaluates and displays `0014.png`. Task 2 evaluates and displays `0001.png`.
 
 To select images, set `images` at the bottom of the task file, inside the `if __name__ == "__main__":` block. Use one of these settings.
 
@@ -48,22 +48,13 @@ Both tasks print the predicted count, expected count, and signed error for each 
 
 | File | Role |
 | --- | --- |
-| [`TASK1.py`](TASK1.py) | Builds the opened Otsu, reflection, and Canny masks. Starts from the Otsu regions and refines them using reflections and Canny. Each detection contains a label, center position, pixel mask, rotated box, and a flag for Canny-only detections. |
-| [`TASK2.py`](TASK2.py) | Reuses preprocessing and detections from Task 1. Fits a line to the reflection inside each box and checks perpendicular spread and reflection length. It also checks the Canny-only flag and whether the box contains foreground pixels. |
-| [`tube_edge_cases.py`](tube_edge_cases.py) | Contains the helpers that Task 1 uses to filter weak regions, merge fragments, split joined or unusually long clusters, and recover missed tubes from Canny edges. |
-| [`color.ipynb`](color.ipynb) | Explores color channels and compares the masks visually. |
-| [`TubesDataset/`](TubesDataset/) | Contains 30 numbered PNG images and the reference annotations used by the evaluation. |
+| [`TASK1.py`](TASK1.py) | Counts the tubes in each image and shows where they are. |
+| [`TASK2.py`](TASK2.py) | Finds and marks tubes that look damaged or deformed. |
+| [`tube_edge_cases.py`](tube_edge_cases.py) | Helps Task 1 handle cases such as tubes touching or appearing in separate pieces. |
+| [`color.ipynb`](color.ipynb) | Shows how different image-processing steps highlight the tubes. |
+| [`TubesDataset/`](TubesDataset/) | Contains the 30 images and the answers used to check the results. |
 
 ## Dataset annotations
 
 [`TubesDataset/annotations.json`](TubesDataset/annotations.json) contains one entry per image.
-
-| Field | Meaning |
-| --- | --- |
-| `filename` | Name of the PNG file in `TubesDataset/`. |
-| `n_tubes` | Reference tube count used by Task 1. |
-| `anomalous` | Indicates whether the image contains an anomalous tube. |
-| `bboxes` | Reference boxes for anomalous tubes. Task 2 uses the number of boxes as the expected anomaly count. |
-
-The evaluation compares counts per image. The plots show where the scripts located the tubes or anomalies.
 
