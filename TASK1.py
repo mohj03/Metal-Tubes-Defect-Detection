@@ -1,8 +1,4 @@
-"""Count metal tubes and evaluate the results against the dataset."""
-
-import argparse
 import json
-from pathlib import Path
 import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,7 +8,6 @@ from tube_edge_cases import (
     euclidean_distance,
     filter_weak_clusters,
     merge_fragmented_clusters,
-    remove_scattered_clusters,
     split_clusters_by_strokes,
     split_unusually_long_clusters,
 )
@@ -47,6 +42,7 @@ def preprocess(image):
     img = cv.imread(str(image))  # load image
     if img is None:
         raise ValueError(f"Could not read image: {image}")
+    
     hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
     lab = cv.cvtColor(img, cv.COLOR_BGR2Lab)
     _, hsv_s, _ = cv.split(hsv)  # hsv channel spaces
@@ -63,7 +59,7 @@ def preprocess(image):
         lab_a, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU
     )
     combined_otsu = otsu_hsv_s & otsu_lab_a  # combining, corresponding white statys white, rest black
-    kernel = cv.getStructuringElement(cv.MORPH_RECT, (20, 20))  # morph with rectangle
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (18, 18))  # morph with rectangle
     opened_cluster = cv.morphologyEx(  # remove background-noise
         combined_otsu,
         cv.MORPH_OPEN,
@@ -115,9 +111,9 @@ def color_clusters(label_image):
     return cv.cvtColor(colored, cv.COLOR_BGR2RGB)
 
 
-def main(image, vis=True):
-    """Count the tubes in one picture and optionally plot the detection."""
-    org_im, hsv_canny, clusters, reflection_mask = preprocess(image)
+def main(images, vis=True):
+    """Return one detection per tube, with its label, position, mask and box."""
+    org_im, hsv_canny, clusters, reflection_mask = images
 
     # 1. Label reflection strokes and keep long ones as cluster evidence.
     # Short reflections (often noise) are left out of line_masks. The mask itself is unchanged.
@@ -134,9 +130,8 @@ def main(image, vis=True):
         if max(cv.minAreaRect(points)[1]) >= 45:
             line_masks.append(stroke_mask)  # clean list of reflections
 
-    # 2. Build the combined heatmap and the independent Canny heatmap.
+    # 2. Build the combined heatmap.
     combined_heatmap = heatmap(hsv_canny | reflection_mask, vis=False)
-    canny_heatmap = heatmap(hsv_canny, vis=False)
 
     # 3. Build initial clusters without merging ambiguous labels.
     # First round of segmemntation
@@ -165,63 +160,94 @@ def main(image, vis=True):
     # 5. Merge appropiate clusters overlapping with a relfection line
     merge_fragmented_clusters(labels, line_masks, 800, fragment_max_area, fragment_gap)
 
-    # 6. Del klustere som dekker flere rør.
+    # 6. Split large clusters
     split_clusters_by_strokes(labels, point_labels)
     split_unusually_long_clusters(labels)
 
-    # 7. Sjekk støtte og form på nytt etter splitting.
-    remove_scattered_clusters(labels, combined_heatmap, reflection_mask)
-    cluster_count = np.count_nonzero(np.unique(labels))
+    # 7. Legg til rør fra Canny-kantområder uten kontakt med klustrene.
+    result_labels, canny_candidates = add_canny_candidates(labels, hsv_canny)
 
-    # 8. Legg til rør med sterk Canny-kontur.
-    result_labels, canny_candidates = add_canny_candidates(labels, hsv_canny, canny_heatmap)
-    canny_count = np.count_nonzero(np.unique(result_labels[canny_candidates]))
+    # 8. Find mean position for each cluster, and fit a bounding box
+    detections = []
+    for label in np.unique(result_labels[result_labels > 0]):
+        mask = (result_labels == label)
+        ys, xs = np.where(mask)
+        position = (float(xs.mean()), float(ys.mean())) # mean position
+        points = np.column_stack((xs, ys)).astype(np.float32) # cluster cordinates
+        box = cv.boxPoints(cv.minAreaRect(points)) # find rectangle corners
+        detections.append({
+            "label": int(label),
+            "position": position,
+            "mask": mask,
+            "box": box,
+            "canny_candidate": bool(np.any(canny_candidates[mask])),
+        })
 
-    # Fiks senereelrjfoirfiorfoieriovjoierjfioerjioerjvfio
     if vis:
-        colored_tubes = color_clusters(result_labels)
         overlay = cv.cvtColor(org_im, cv.COLOR_BGR2RGB)
-        detected = result_labels > 0
-        overlay[detected] = (0.35 * overlay[detected] + 0.65 * colored_tubes[detected]).astype(np.uint8)
-        display_images([
-            ("Strekbildet (cleaned)", reflection_mask),
-            ("Klustere før filtrering", color_clusters(initial_labels)),
-            ("Canny + strekbildet (cleaned)", combined_heatmap),
-            ("Rør etter avstemming", overlay)
-        ])
+        for detection in detections:
+            color_ = (
+                (detection["label"] * 50) % 256,
+                (detection["label"] * 100) % 256,
+                (detection["label"] * 150) % 256
+            )
+            corners = np.rint(detection["box"]).astype(np.int32)
+            center = tuple(map(int, detection["position"])) # int(x,y)
+            cv.polylines(overlay, [corners], True, (0, 240, 255), 2, cv.LINE_AA) # draw box
+            cv.circle(overlay, center, 5, (20, 20, 20), cv.FILLED, cv.LINE_AA)
+            cv.circle(overlay, center, 4, color_, cv.FILLED, cv.LINE_AA)
+            caption = str(detection["label"])
+            caption_position = (center[0] + 6, center[1] - 6)
+            for color, width in (((20, 20, 20), 4), ((255, 255, 255), 2)):
+                cv.putText(
+                    overlay, caption, caption_position, cv.FONT_HERSHEY_SIMPLEX,
+                    0.55, color, width, cv.LINE_AA
+                )
+        display_images([("Rør med roterte bokser og posisjon", overlay)])
 
-    return int(cluster_count + canny_count)
+    return detections
 
 
-def evaluate(dataset):
-    """Print the prediction, reference count and error for each annotated image."""
-    with (dataset / "annotations.json").open(encoding="utf-8") as file:
-        annotations = json.load(file)
+def evaluate(processed_images, expected_counts, vis=False):
+    correct = 0
+    errors = []
+    header = f"{'Image':<12} {'Found':>7} {'Expected':>8} {'Error':>7}"
+    print(header)
+    print("-" * len(header))
 
-    exact = 0
-    total_error = 0
-    print(f"{'Bilde':<12} {'Found':>6} {'Right answers':>6} {'Error':>6}")
-    for entry in annotations:
-        filename = entry["filename"]
-        expected = entry["n_tubes"]
-        count = main(dataset / filename, vis=False)
+    for image, imgs in processed_images.items():
+        filename = image.rsplit("/", 1)[-1]
+        count = len(main(imgs, vis=vis))  # current cluster count
+        expected = expected_counts[filename]
         error = count - expected
-        exact += error == 0
-        total_error += abs(error)
-        print(f"{filename:<12} {count:>6} {expected:>6} {error:>+6}", flush=True)
+        errors.append(error)
+        correct += error == 0
+        print(f"{filename:<12} {count:>7} {expected:>8} {error:>+7}")
 
-    if annotations:
-        total = len(annotations)
-        print(f"\nNumber of correct: {exact}/{total} pictures ({exact / total:.1%}).")
-        print(f"STD: {total_error / total:.2f} tubes pr. picture")
+    std = f"{np.std(errors):.2f} tubes" if errors else "N/A"
+    print("-" * len(header))
+    print(f"Correct: {correct}/{len(errors)}    Error SD: {std}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", type=Path, help="Vis deteksjonen for ett bilde.")
-    parser.add_argument("--dataset", type=Path, default=Path(__file__).resolve().parent / "TubesDataset")
-    args = parser.parse_args()
-    if args.image is None:
-        evaluate(args.dataset)
-    else:
-        print(f"Antall rør: {main(args.image)}")
+    vis = True
+    images = ["TubesDataset/0003.png"]  # None for all
+
+    with open("TubesDataset/annotations.json", encoding="utf-8") as file:
+        annotations = json.load(file)
+
+    expected_counts = {}
+    all_images = []
+    for entry in annotations:
+        filename = entry["filename"]
+        expected_counts[filename] = entry["n_tubes"]
+        all_images.append(f"TubesDataset/{filename}")
+
+    if not images:
+        images = all_images
+
+    processed_images = {}
+    for image in images:
+        processed_images[image] = preprocess(image)
+
+    evaluate(processed_images, expected_counts, vis=vis)

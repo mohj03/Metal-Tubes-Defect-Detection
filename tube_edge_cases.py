@@ -1,11 +1,3 @@
-"""Edge cases.
-
-TASK1 lager de første klustrene og bildebevisene. Denne modulen
-behandler svake og delte klustere, refleksjoner og ekstra Canny-konturer.
-Funksjonene som tar labels arbeider vanligvis direkte i etikettbildet.
-add_canny_candidates lager en kopi slik at Canny-tillegg kan vises separat.
-"""
-
 import cv2 as cv
 import numpy as np
 
@@ -28,7 +20,6 @@ def shared_clusters(line_mask, label_image):
     """Find cluster IDs that overlap with a line by at least 10 pixels"""
     ids, counts = np.unique(label_image[line_mask], return_counts=True)
     return ids[(ids != 0) & (counts >= 10)] # array of IDs with overlap regions
-
 
 def merge_nearby_fragments(labels, max_area, max_gap):
     """ Merge small fragments with their closest neighbor.
@@ -141,45 +132,6 @@ def distinct_strokes(first, second, angle_limit):
 
     # Check distance and overlap
     return separation >= 30 and overlap >= min_overlap
-
-
-def remove_scattered_clusters(labels, heatmap, cleaned, min_final_support=0.05):
-    """Fjern refleksklustere som står igjen etter sammenslåing og splitting.
-
-    Tydelig rørform er nok til å beholdes. Et kluster uten strekpiksler
-    og med gjennomsnittlig støtte under 0,05 kan ellers bare beholdes
-    hvis formen består med forhold 2,2 og minst 20 % av pikslene ligger
-    innen 8 piksler fra varmekartet. Ved null varmekartstøtte må største
-    sammenhengende del dekke minst 75 % av pikslene, og klusteret må
-    fylle minst 55 % av den roterte boksen. labels endres direkte.
-    """
-    near_heat = (
-        euclidean_distance(heatmap == 0) <= 8
-        if np.any(heatmap) else np.zeros_like(labels, dtype=bool)
-    )
-    for label in np.unique(labels[labels > 0]):
-        pixels = labels == label
-        if has_tube_shape(pixels):
-            continue
-        if not np.any(cleaned[pixels]) and heatmap[pixels].mean() < min_final_support:
-            if near_heat[pixels].mean() < 0.20 or not has_tube_shape(pixels, min_rec=2.2):
-                labels[pixels] = 0
-                continue
-        if np.any(heatmap[pixels] > 0):
-            continue
-
-        ys, xs = np.where(pixels)
-        bounds = np.s_[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
-        local = pixels[bounds].astype(np.uint8)
-        _, _, stats, _ = cv.connectedComponentsWithStats(local, connectivity=8)
-        largest_fraction = stats[1:, cv.CC_STAT_AREA].max() / len(xs)
-
-        points = np.column_stack((xs, ys)).astype(np.float32)
-        _, (width, height), _ = cv.minAreaRect(points)
-        fill = len(xs) / ((width + 1) * (height + 1))
-        if largest_fraction < 0.75 or fill < 0.55:
-            labels[pixels] = 0
-
 
 def filter_weak_clusters(labels, combined_heatmap, min_cluster_support, fragment_max_area, fragment_gap):
     """Keep clusters with enough heatmap support or a clear tube shape.
@@ -459,73 +411,69 @@ def split_unusually_long_clusters(labels):
         next_label += 1
 
 
-def add_canny_candidates(labels, hsv_canny, canny_heatmap):
-    """Legg til rørkandidater som først blir synlige som Canny-konturer.
+def add_canny_candidates(labels, hsv_canny):
+    """Detect new tube candidates from Canny edges.
 
-    En lukking med en elliptisk kjerne på 21 × 21 tetter hull i
-    Canny-masken. En kontur vurderes hvis arealet er 1 000–8 500,
-    kortsiden er minst 25 piksler, langsiden er høyst 165 piksler og
-    langsiden er høyst dobbelt så lang som kortsiden. Gjennomsnittlig
-    støtte fra Canny-varmekartet må være minst 0,93 langs konturen og
-    minst 0,60 over det fylte området.
+    Thicken and connect nearby Canny edges using dilation and morphological closing.
+    Ignore connected regions that overlap existing clusters.
 
-    En kandidat avvises hvis den overlapper en eksisterende deteksjon,
-    eller hvis mer enn 15 % av kandidatens piksler er innen 12 piksler
-    fra en slik deteksjon. Godkjente kandidater får egne etiketter.
-    Returnerer en kopi med alle etiketter og en boolsk maske for de
-    nye Canny-kandidatene. Inndataetikettene endres ikke.
+    Keep regions with an area between 750 and 8500 pixels, a minimum width
+    of 25 pixels, a maximum length of 165 pixels, and a length-to-width ratio
+    of at most 2. Defined by observations
+    Assign new labels to valid candidates
     """
-    # 8. Et rør er bare synlig i Canny
-    # ====================================================================
-    # Kopier klustrene før vi ser etter nye konturer.
+
+    # thicker canny edges
+    disk = cv.getStructuringElement(cv.MORPH_ELLIPSE, (9, 9))
+    thick_edges = cv.dilate((hsv_canny > 0).astype(np.uint8), disk) # thicker line
+
+    # morph edges
+    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (9, 9))
+    closed_edges = cv.morphologyEx(thick_edges, cv.MORPH_CLOSE, kernel)
+
+    count, edge_labels, stats, _ = cv.connectedComponentsWithStats(
+        closed_edges, connectivity=8
+    )
+
+    touched = np.unique(edge_labels[labels > 0]) # canny and cluster overlap
+    touches_existing_tube = np.zeros(count, dtype=bool)
+    touches_existing_tube[touched] = True # bool overlap
+
     result_labels = labels.copy()
-    # Lukk hull med en kjerne på 21 × 21 og krev sterk støtte langs
-    # konturen (0,93) og tilstrekkelig støtte inne i den (0,60).
     canny_candidates = np.zeros_like(labels, dtype=bool)
-    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (21, 21))
-    closed = cv.morphologyEx(hsv_canny, cv.MORPH_CLOSE, kernel)
-    contours, _ = cv.findContours(closed, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
     next_label = int(result_labels.max()) + 1
 
-    for contour in sorted(contours, key=cv.contourArea, reverse=True):
-        area = cv.contourArea(contour)
-        if not 1000 <= area <= 8500:
-            continue
-        _, dimensions, _ = cv.minAreaRect(contour)
-        short_side, long_side = sorted(dimensions)
-        if short_side < 25 or long_side > 165 or long_side / short_side > 2:
+    for edge_id in range(1, count):
+        if touches_existing_tube[edge_id]:
             continue
 
-        x, y, width, height = cv.boundingRect(contour)
-        bounds = np.s_[y:y + height, x:x + width]
-        local_contour = contour - np.array([x, y], dtype=contour.dtype)
-        outline = np.zeros((height, width), dtype=np.uint8)
-        cv.drawContours(outline, [local_contour], -1, 1, 1)
-        if np.mean(canny_heatmap[bounds][outline > 0]) < 0.93:
+        x, y, width, height, area = stats[edge_id] # size of canny cluster check
+        if not 750 <= area <= 8500:
             continue
 
-        filled = np.zeros_like(outline)
-        cv.drawContours(filled, [local_contour], -1, 1, cv.FILLED)
-        candidate = filled > 0
-        if canny_heatmap[bounds][candidate].mean() < 0.60:
-            continue
-        local_labels = result_labels[bounds]
-        # En ekstra kontur får bare telle hvis området ennå ikke er markert.
-        if np.any(local_labels[candidate]):
+        # find the bounding box
+        x_end = x + width
+        y_end = y + height
+
+        # find pixels belonging to this Canny cluster
+        candidate = edge_labels[y:y_end, x:x_end] == edge_id
+
+        # get pixel coordinates (x, y)
+        ys, xs = np.where(candidate)
+        points = np.column_stack((xs, ys)).astype(np.float32)
+
+        # find the dimensions of the rotated rectangle
+        _, (side1, side2), _ = cv.minAreaRect(points)
+
+        short_side = min(side1, side2)
+        long_side = max(side1, side2)
+
+        # size check
+        if short_side < 25 or long_side > 165 or long_side > 2 * short_side:
             continue
 
-        # En kontur tett ved et markert rør kan være en annen kant av samme rør.
-        margin = 12
-        halo = np.s_[max(0, y-margin):y+height+margin, max(0, x-margin):x+width+margin]
-        nearby = result_labels[halo] > 0
-        if np.any(nearby):
-            distance = euclidean_distance(~nearby)
-            offset_y, offset_x = min(y, margin), min(x, margin)
-            local_distance = distance[offset_y:offset_y+height, offset_x:offset_x+width]
-            if np.mean(local_distance[candidate] <= margin) > 0.15:
-                continue
-
-        local_labels[candidate] = next_label
-        canny_candidates[bounds][candidate] = True
+        result_labels[y:y_end, x:x_end][candidate] = next_label
+        canny_candidates[y:y_end, x:x_end][candidate] = True
         next_label += 1
+
     return result_labels, canny_candidates
